@@ -30,6 +30,7 @@ tf_cuda_library(
     name = "c_api_internal",
     srcs = ["c_api.h"],
     hdrs = ["c_api_internal.h"],
+    visibility = ["//tensorflow/c:__subpackages__"],
     deps = select({
         "//tensorflow:android": [
             "//tensorflow/core:android_tensorflow_lib_lite",
@@ -44,8 +45,13 @@ tf_cuda_library(
 
 tf_cuda_library(
     name = "c_api",
-    srcs = ["c_api.cc"],
-    hdrs = ["c_api.h"],
+    srcs = [
+        "c_api.cc",
+        "c_api_function.cc",
+    ],
+    hdrs = [
+        "c_api.h",
+    ],
     copts = tf_copts(),
     visibility = ["//visibility:public"],
     deps = select({
@@ -60,10 +66,13 @@ tf_cuda_library(
             "//tensorflow/cc:ops",
             "//tensorflow/cc:grad_ops",
             "//tensorflow/cc:scope_internal",
+            "//tensorflow/cc:while_loop",
             "//tensorflow/core:core_cpu",
+            "//tensorflow/core:core_cpu_internal",
             "//tensorflow/core:framework",
             "//tensorflow/core:protos_all_cc",
             "//tensorflow/core:lib",
+            "//tensorflow/core:lib_internal",
         ],
     }),
 )
@@ -83,6 +92,7 @@ tf_cuda_library(
     visibility = ["//visibility:public"],
     deps = [
         ":c_api",
+        ":c_api_internal",
         "//tensorflow/core:lib",
     ],
 )
@@ -103,6 +113,19 @@ tf_cuda_library(
 # -----------------------------------------------------------------------------
 # Tests
 
+tf_cuda_library(
+    name = "c_test_util",
+    testonly = 1,
+    srcs = ["c_test_util.cc"],
+    hdrs = ["c_test_util.h"],
+    deps = [
+        ":c_api",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+    ],
+)
+
 tf_cc_test(
     name = "c_api_test",
     size = "small",
@@ -120,6 +143,7 @@ tf_cc_test(
     # linkstatic = tf_kernel_tests_linkstatic(),
     deps = [
         ":c_api",
+        ":c_test_util",
         "//tensorflow/cc:cc_ops",
         "//tensorflow/cc:grad_ops",
         "//tensorflow/cc/saved_model:signature_constants",
@@ -136,6 +160,34 @@ tf_cc_test(
         "//tensorflow/core/kernels:array",
         "//tensorflow/core/kernels:control_flow_ops",
         "//tensorflow/core/kernels:math",
+    ],
+)
+
+tf_cc_test(
+    name = "c_api_function_test",
+    size = "small",
+    srcs = ["c_api_function_test.cc"],
+    deps = [
+        ":c_api",
+        ":c_test_util",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:lib_internal",
+        "//tensorflow/core:protos_all_cc",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
+    ],
+)
+
+tf_cc_test(
+    name = "while_loop_test",
+    size = "small",
+    srcs = ["while_loop_test.cc"],
+    deps = [
+        ":c_api",
+        ":c_test_util",
+        "//tensorflow/core:lib",
+        "//tensorflow/core:test",
+        "//tensorflow/core:test_main",
     ],
 )
 
