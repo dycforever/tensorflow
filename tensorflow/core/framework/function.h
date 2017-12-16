@@ -354,6 +354,7 @@ class FunctionLibraryDefinition : public OpRegistryInterface {
     OpRegistrationData op_registration_data;
   };
 
+  // dyc: default_registry_ 就是全局的 OpRegistry::Global()
   const OpRegistryInterface* const default_registry_;
   gtl::FlatMap<string, std::unique_ptr<FunctionDefAndOpRegistration>>
       function_defs_;

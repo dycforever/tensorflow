@@ -426,7 +426,7 @@ class ExecutorImpl : public Executor {
   gtl::FlatMap<string, FrameInfo*> frame_info_;
 
   TF_DISALLOW_COPY_AND_ASSIGN(ExecutorImpl);
-};
+}; // class ExecutorImpl
 
 // Infer memory allocation attributes of a node n's output,
 // based on its use node dst.  Note that dst might not be directly
@@ -864,7 +864,7 @@ class ExecutorState {
     // Every entry carries an optional DeviceContext containing
     // Device-specific information about how the Tensor was produced.
     DeviceContext* device_context = nullptr;
-  };
+  }; // struct Entry 
 
   // Contains a value for [node->id()] for the device context assigned by the
   // device at the beginning of a step.
@@ -893,6 +893,9 @@ class ExecutorState {
     // is resized once. Each element of tensors_ is written once by the
     // source node of an edge and is cleared by the destination of the same
     // edge. The latter node is never run concurrently with the former node.
+
+    // dyc: 所有 OP 的输入/输出 tensor 都放在这个大数组中，数组长度即 total_input_tensors， 
+    //      即 FrameState::total_inputs, 在 ExecutorImpl::Initialize 中有计算
     Entry* input_tensors;
 
     // The number of outstanding ops for each iteration.
@@ -929,7 +932,7 @@ class ExecutorState {
 
    private:
     PendingCounts counts_;
-  };
+  }; // struct IterationState
 
   struct FrameState {
     explicit FrameState(const ExecutorImpl* impl, int parallel_iters)
@@ -1110,7 +1113,7 @@ class ExecutorState {
         iterations[i] = nullptr;
       }
     }
-  };
+  }; // struct FrameState
 
   // A tagged node: <frame*, iter, node*>.
   struct TaggedNode {
@@ -1161,7 +1164,7 @@ class ExecutorState {
    private:
     gtl::InlinedVector<TaggedNode, 16> ready_;
     int front_index_;
-  };
+  }; // class TaggedNodeReadyQueue
 
   struct AsyncState;
 
@@ -1184,6 +1187,8 @@ class ExecutorState {
   FunctionCallFrame* call_frame_;
   const ExecutorImpl* impl_;
   CancellationManager* cancellation_manager_;
+  // dyc: usually dispatch to DirectSession::SchedClosure(pool, callback), 
+  //      which calls pool->Schedule(std::move(callback));
   Executor::Args::Runner runner_;
   bool sync_on_finish_;
 
@@ -1231,6 +1236,7 @@ class ExecutorState {
                                TaggedNodeSeq* ready);
 
   // Process a ready node in current thread.
+  // dyc: Process() 是真正的线程执行函数
   void Process(TaggedNode node, int64 scheduled_usec);
 
   // Before invoking item->kernel, fills in its "inputs".
@@ -1287,7 +1293,7 @@ class ExecutorState {
                          int64 input_iter) const NO_THREAD_SAFETY_ANALYSIS {
     return input_frame->GetIteration(input_iter)->input_tensors;
   }
-};
+}; // class ExecutorState
 
 ExecutorState::ExecutorState(const Executor::Args& args, ExecutorImpl* impl)
     : vlog_(VLOG_IS_ON(1)),
@@ -1436,6 +1442,7 @@ void ExecutorState::RunAsync(Executor::DoneCallback done) {
     root_frame_->iterations[0]->outstanding_ops = ready.size();
     done_cb_ = std::move(done);
     // Schedule to run all the ready ops in thread pool.
+    // dyc: 分发 expensive node, 对于 root 情况 inline_ready 是 null，则把所有 root 节点都放到线程池中执行
     ScheduleReady(ready, nullptr);
   }
 }
@@ -1485,6 +1492,7 @@ struct ExecutorState::AsyncState {
   }
 };
 
+// dyc: Process() 是真正的线程执行函数
 void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
   const GraphView& gview = impl_->gview_;
   TaggedNodeSeq ready;
@@ -1557,7 +1565,8 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       VLOG(1) << "Process node: " << id << " step " << params.step_id << " "
               << SummarizeNode(*node) << " is dead: " << tagged_node.is_dead;
     }
-
+    // dyc: input_frame->GetIteration(input_iter)->input_tensors
+    //      GetIteration() return a struct IterationState, and input_tensors is struct Entry*
     Entry* input_tensors = GetInputTensors(input_frame, input_iter);
     Entry* first_input = input_tensors + item.input_start;
     outputs.clear();
@@ -1573,6 +1582,8 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
     } else {
       // Prepares inputs.
       bool is_input_dead = false;
+      // dyc: extract tensor from @first_input and assign to @inputs 
+      //      copy value or de-reference ...
       s = PrepareInputs(item, first_input, &inputs, &input_device_contexts,
                         &input_alloc_attrs, &is_input_dead);
       if (!s.ok()) {
@@ -1638,11 +1649,12 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
             device->ConsumeListOfAccessedTensors(state->ctx.op_device_context(),
                                                  accessed);
           }
+          // dyc: update num_outstanding_ops_ and call ScheduleReady()
           bool completed =
               NodeDone(s, state->item->node, ready, stats, nullptr);
           delete state;
           if (completed) Finish();
-        };
+        }; // auto done
         if (stats) nodestats::SetOpStart(stats);
         device->ComputeAsync(async, &state->ctx, done);
       } else {
@@ -1652,6 +1664,7 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
         device->Compute(CHECK_NOTNULL(op_kernel), &ctx);
         if (stats) nodestats::SetOpEnd(stats);
 
+        // dyc: move output tensor from ctx to outputs[]
         s = ProcessOutputs(item, &ctx, &outputs, stats);
         if (s.ok() && impl_->device_record_tensor_accesses_) {
           // Get the list of all tensors accessed during the execution
@@ -1659,8 +1672,8 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
           device_context = ctx.op_device_context();
         }
         if (stats) nodestats::SetMemory(stats, &ctx);
-      }
-    }
+      } // if (item.kernel_is_async) 
+    } // if (tagged_node.is_dead && !IsTransferNode(node)) 
 
     if (!launched_asynchronously) {
       // Clears inputs.
@@ -1668,9 +1681,13 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
       for (int i = 0; i < num_inputs; ++i) {
         (first_input + i)->ClearVal();
       }
+      // dyc: id is tagged_node->node->id()
       MaybeMarkCompleted(input_frame, input_iter, id);
       // Propagates outputs.
       if (s.ok()) {
+        // dyc: Propagates tensor in outputs to destine node
+        //      mostly call tagged_node.input_frame->ActivateNodes() to push dst nodes to ready
+        //      item 是 tagged_node 在 graph_view 中的对应节点
         PropagateOutputs(tagged_node, &item, &outputs, &ready);
       }
       outputs.clear();
@@ -1683,6 +1700,8 @@ void ExecutorState::Process(TaggedNode tagged_node, int64 scheduled_usec) {
         scheduled_usec = nodestats::NowInUsec();
       }
       // Postprocess.
+      // dyc: save stats to collector, update num_outstanding_ops_ and call ScheduleReady() to go on compute
+      //      到此，item.node 已经执行完了，PropagateOutputs() 已经把后续节点放到了 ready 中，NodeDone() 内部会调用 ScheduleReady() 来分发
       completed = NodeDone(s, item.node, ready, stats, &inline_ready);
     }
   }  // while !inline_ready.empty()
@@ -1730,6 +1749,8 @@ Status ExecutorState::PrepareInputs(const NodeItem& item, Entry* first_input,
       }
       continue;
     }
+    // dyc: 拥有 value 但是想要 ref 是不行的；
+    //      拥有 ref 但是想要 value，可以把 ref 转成 value
     if (entry->ref == nullptr) {
       if (expect_ref) {
         return AttachDef(
@@ -1738,6 +1759,7 @@ Status ExecutorState::PrepareInputs(const NodeItem& item, Entry* first_input,
       }
       inp->tensor = entry->val.get();
     } else {
+      // dyc: entry->ref != nullptr
       {
         mutex_lock ml(*entry->ref_mu);
         if (!entry->ref->IsInitialized() && !IsInitializationOp(item.node)) {
@@ -1766,10 +1788,11 @@ Status ExecutorState::PrepareInputs(const NodeItem& item, Entry* first_input,
         inp->tensor = entry->val.get();
       }
     }
-  }
+  } // for (int i = 0; i < item.num_inputs; ++i)
   return Status::OK();
 }
 
+// dyc: move output tensor from ctx to outputs[]
 Status ExecutorState::ProcessOutputs(const NodeItem& item, OpKernelContext* ctx,
                                      EntryVector* outputs,
                                      NodeExecStats* stats) {
@@ -1873,6 +1896,7 @@ Status ExecutorState::ProcessOutputs(const NodeItem& item, OpKernelContext* ctx,
           }
         }
       } else {
+        // dyc: if (dtype != item.output_type(i))
         s.Update(errors::Internal("Output ", i, " of type ",
                                   DataTypeString(dtype),
                                   " does not match declared output type ",
@@ -1888,12 +1912,15 @@ Status ExecutorState::ProcessOutputs(const NodeItem& item, OpKernelContext* ctx,
   }
   return s;
 }
-
+// dyc: item 是 tagged_node 在 graph_view 中的对应节点
+//      大部分情况是调用 tagged_node.input_frame->ActivateNodes() to
+//      push dst_node of @item to @ready
 void ExecutorState::PropagateOutputs(const TaggedNode& tagged_node,
                                      const NodeItem* item, EntryVector* outputs,
                                      TaggedNodeSeq* ready) {
   const Node* node = tagged_node.node;
   FrameState* input_frame = tagged_node.input_frame;
+  // dyc: iter 用于循环，不是迭代 tensor 的
   int64 input_iter = tagged_node.input_iter;
   const bool is_dead = tagged_node.is_dead;
 
@@ -1951,6 +1978,7 @@ void ExecutorState::PropagateOutputs(const TaggedNode& tagged_node,
                                                            input_iter, ready);
     }
   } else {
+    // dyc: IsNextIteration(node)
     DCHECK(IsNextIteration(node));
     mutex_lock l(input_frame->mu);
     if (is_dead) {
@@ -1994,6 +2022,7 @@ void ExecutorState::PropagateOutputs(const TaggedNode& tagged_node,
   }
 }
 
+// dyc: save stats to collector, update num_outstanding_ops_ and call ScheduleReady() to go on compute
 bool ExecutorState::NodeDone(const Status& s, const Node* node,
                              const TaggedNodeSeq& ready, NodeExecStats* stats,
                              TaggedNodeReadyQueue* inline_ready) {
@@ -2041,6 +2070,8 @@ bool ExecutorState::NodeDone(const Status& s, const Node* node,
   return completed;
 }
 
+// dyc: 这是一个调度函数，ready 中存放的是所有待调度的 node
+//      但是当前线程自身也是一个 worker，所以自己也要干活，inline_ready 中存放的就是分给自己的 node
 void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
                                   TaggedNodeReadyQueue* inline_ready) {
   if (ready.empty()) return;
@@ -2049,15 +2080,18 @@ void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
   if (stats_collector_) {
     scheduled_usec = nodestats::NowInUsec();
   }
+  // dyc: inline_ready == nullptr when be called in ExecutorState::RunAsync()
   if (inline_ready == nullptr) {
     // Schedule to run all the ready ops in thread pool.
     for (auto& tagged_node : ready) {
+      // dyc: Process() 是真正的线程执行函数
       runner_([=]() { Process(tagged_node, scheduled_usec); });
     }
     return;
   }
   const GraphView& gview = impl_->gview_;
   const TaggedNode* curr_expensive_node = nullptr;
+  // dyc: 把 expensive 的单独分发给别的线程，easy 的留给自己
   for (auto& tagged_node : ready) {
     const NodeItem& item = *gview.node(tagged_node.node->id());
     if (tagged_node.is_dead || !item.kernel_is_expensive) {
@@ -2067,12 +2101,14 @@ void ExecutorState::ScheduleReady(const TaggedNodeSeq& ready,
       if (curr_expensive_node) {
         // Dispatch to another thread since there is plenty of work to
         // do for this thread.
+        // dyc: Process() 是真正的线程执行函数
         runner_(std::bind(&ExecutorState::Process, this, *curr_expensive_node,
                           scheduled_usec));
       }
       curr_expensive_node = &tagged_node;
     }
   }
+  // dyc: 如果自己没活干，把最后的 expensive 留给自己; 否则把这最后的 expensive 也交给单独线程
   if (curr_expensive_node) {
     if (inline_ready->empty()) {
       // Tail recursion optimization
@@ -2369,6 +2405,7 @@ void ExecutorState::CleanupFramesIterations(FrameState* frame, int64 iter,
   }
 }
 
+// dyc: push dst_node of @item to @ready
 void ExecutorState::FrameState::ActivateNodes(const NodeItem* item,
                                               const bool is_dead, int64 iter,
                                               EntryVector* outputs,
@@ -2444,6 +2481,7 @@ void ExecutorState::FrameState::ActivateNodes(const NodeItem* item,
     }
 
     if (dst_need_input) {
+      // const EdgeInfo& e = edges[out_index];
       const int dst_slot = e.input_slot;
       const int dst_loc = dst_item->input_start + dst_slot;
       if (e.is_last) {
@@ -2459,8 +2497,8 @@ void ExecutorState::FrameState::ActivateNodes(const NodeItem* item,
       ready->push_back(TaggedNode(dst_item->node, this, iter, dst_dead));
       iter_state->outstanding_ops++;
     }
-  }
-}
+  } // for (size_t out_index = 0; out_index < num_output_edges; out_index++)
+} // ExecutorState::FrameState::ActivateNodes()
 
 void ExecutorState::FrameState::ActivateNexts(const GraphView* gview,
                                               int64 iter,

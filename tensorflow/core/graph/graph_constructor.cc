@@ -257,8 +257,10 @@ bool NodeNameInValues(const std::vector<string>& control_dependencies,
                    node_name) != control_dependencies.end();
 }
 
+// dyc: Graph 中现有的名字没有重复，即将添加的 node_defs_ 中的 node 名字也没有重复
 Status GraphConstructor::EnsureNoNameCollisions() {
   existing_nodes_.reserve(g_->num_nodes());
+  // dyc: Source and Sink are added when Graph constructed
   for (Node* n : g_->nodes()) {
     bool already_exists = !existing_nodes_.insert({n->name(), n}).second;
     if (already_exists) {
@@ -902,6 +904,8 @@ Status GraphConstructor::MakeEdge(Node* src, int output_index, Node* dst,
 
 }  // namespace
 
+// dyc: called by SimpleGraphExecutionState::InitBaseGraph()
+//      g is new there
 Status ConvertGraphDefToGraph(const GraphConstructorOptions& opts,
                               const GraphDef& gdef, Graph* g) {
   ShapeRefiner refiner(gdef.versions().producer(), g->op_registry());

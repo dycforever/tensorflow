@@ -273,6 +273,7 @@ class Edge {
   // Return the number of the destination input that consumes the data
   // carried by this edge.  The special value kControlSlot is used
   // for control dependencies.
+  // dyc: index of des_node's input
   int dst_input() const { return dst_input_; }
 
   // Return true iff this is an edge that indicates a control-flow

@@ -556,7 +556,7 @@ class OpKernelContext {
 
     // TensorSliceReaderCache support.
     checkpoint::TensorSliceReaderCacheWrapper* slice_reader_cache = nullptr;
-  };
+  }; // struct Params
 
   // params must outlive the OpKernelContext.
   explicit OpKernelContext(Params* params);

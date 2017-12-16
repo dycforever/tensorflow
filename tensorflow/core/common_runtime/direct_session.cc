@@ -363,7 +363,7 @@ Status DirectSession::MaybeInitializeExecutionState(
   *out_already_initialized = false;
   return Status::OK();
 }
-
+// dyc: called by LoadMetaGraphIntoSession() in cc/saved_model/loader.cc
 Status DirectSession::Create(const GraphDef& graph) {
   TF_RETURN_IF_ERROR(init_error_);
   if (graph.node_size() > 0) {
@@ -389,6 +389,7 @@ Status DirectSession::ExtendLocked(const GraphDef& graph) {
   // with `graph` and do not need to call `Extend()`.
   TF_RETURN_IF_ERROR(
       MaybeInitializeExecutionState(graph, &already_initialized));
+  // dyc: 如果已经初始化过了，上面的函数就没做什么事情，所以要再次调用 flib_def_->AddLibrary() 以及 execution_state_->Extend()
   if (already_initialized) {
     TF_RETURN_IF_ERROR(flib_def_->AddLibrary(graph.library()));
     std::unique_ptr<SimpleGraphExecutionState> state;
@@ -487,6 +488,7 @@ Status DirectSession::Run(const RunOptions& run_options,
   FunctionCallFrame call_frame(executors_and_keys->input_types,
                                executors_and_keys->output_types);
   gtl::InlinedVector<Tensor, 4> feed_args(inputs.size());
+  // dyc: mapping from name to tensor is saved in executors_and_keys->input_name_to_index[] when executors_and_keys created
   for (const auto& it : inputs) {
     if (it.second.dtype() == DT_RESOURCE) {
       Tensor tensor_from_handle;
@@ -581,8 +583,9 @@ Status DirectSession::Run(const RunOptions& run_options,
     delete barrier;
     return errors::Cancelled("Run call was cancelled");
   }
-
+  // dyc: each item associated to a partition_graph
   for (const auto& item : executors_and_keys->items) {
+    // dyc: call (new ExecutorState(args, this))->RunAsync(std::move(done));
     item.executor->RunAsync(args, barrier->Get());
   }
 
@@ -868,7 +871,7 @@ Status DirectSession::PRun(const string& handle, const NamedTensorList& inputs,
 
   return s;
 }
-
+// dyc: @resource_tensor is input parameter of session->Run()
 Status DirectSession::ResourceHandleToInputTensor(const Tensor& resource_tensor,
                                                   Tensor* retrieved_tensor) {
   if (resource_tensor.dtype() != DT_RESOURCE) {
@@ -877,10 +880,14 @@ Status DirectSession::ResourceHandleToInputTensor(const Tensor& resource_tensor,
         resource_tensor.dtype()));
   }
 
+  // dyc: @resource_tensor is input parameter of session->Run()
   ResourceHandle resource_handle = resource_tensor.scalar<ResourceHandle>()();
 
+  // kTensorHandleResourceTypeName = "TensorHandle";
   if (resource_handle.container() ==
       SessionState::kTensorHandleResourceTypeName) {
+    // The session state remembers the tensors we choose to keep across
+    // multiple run calls.
     return session_state_.GetTensor(resource_handle.name(), retrieved_tensor);
   } else {
     return errors::InvalidArgument(strings::StrCat(
@@ -1036,6 +1043,9 @@ Status DirectSession::CheckFetch(const NamedTensorList& feeds,
   return Status::OK();
 }
 
+// dyc: 创建 executor 的过程就是：
+//      1. 根据每个 node 的 device 分隔图
+//      2. 为每个图设置参数（device、function_library、kernel）
 Status DirectSession::GetOrCreateExecutors(
     thread::ThreadPool* pool, gtl::ArraySlice<string> inputs,
     gtl::ArraySlice<string> outputs, gtl::ArraySlice<string> target_nodes,
@@ -1122,6 +1132,10 @@ Status DirectSession::GetOrCreateExecutors(
   // The executor_lock_ is intentionally released while executor is
   // being created.
   std::unordered_map<string, std::unique_ptr<Graph>> graphs;
+  // call Partition() defined in graph_partition.cc, add SendOp/RecvOp
+
+  // dyc: 对于 DirectSession, 就是根据每个 node->assigned_device_name() 来分
+  //      后面会为每个 graph 创建一个 executor，然后异步执行
   TF_RETURN_IF_ERROR(CreateGraphs(options, &graphs, &ek->flib_def,
                                   run_state_args, &ek->input_types,
                                   &ek->output_types));
@@ -1207,7 +1221,7 @@ Status DirectSession::GetOrCreateExecutors(
     TF_RETURN_IF_ERROR(
         NewLocalExecutor(params, partition_graph.release(), &executor));
     item->executor.reset(executor);
-  }
+  } // for (auto iter = graphs.begin(); iter != graphs.end(); ++iter)
 
   // Cache the mapping from input/output names to graph elements to
   // avoid recomputing it every time.
@@ -1256,6 +1270,8 @@ Status DirectSession::GetOrCreateExecutors(
   return Status::OK();
 }
 
+// dyc: create partitioned Graphs
+//      对于 DirectSession, 就是根据每个 node->assigned_device_name() 来分
 Status DirectSession::CreateGraphs(
     const BuildGraphOptions& subgraph_options,
     std::unordered_map<string, std::unique_ptr<Graph>>* outputs,
@@ -1282,6 +1298,7 @@ Status DirectSession::CreateGraphs(
     execution_state = temp_exec_state_holder.get();
   } else {
     execution_state = execution_state_.get();
+    // dyc: call BuildGraph() to build SimpleClientGraph, which copys from flib_def_
     TF_RETURN_IF_ERROR(
         execution_state->BuildGraph(subgraph_options, &client_graph));
   }
@@ -1320,7 +1337,7 @@ Status DirectSession::CreateGraphs(
           node_name, " to ", iter->second, " does not match ", placement);
     }
   }
-
+  // dyc: 所以上面那个循环的主要目的是 check ??
   stateful_placements_ = execution_state->GetStatefulPlacements();
 
   // Remember the graph in run state if this is a partial run.
@@ -1345,6 +1362,8 @@ Status DirectSession::CreateGraphs(
   popts.control_flow_added = false;
 
   std::unordered_map<string, GraphDef> partitions;
+  // dyc: defined in core/graph/graph_partition.cc
+  //      for DirectSession, 就是根据每个 node->assigned_device_name() 来分
   TF_RETURN_IF_ERROR(Partition(popts, &client_graph->graph, &partitions));
 
   std::vector<string> device_names;
@@ -1355,6 +1374,7 @@ Status DirectSession::CreateGraphs(
 
   // Check for valid partitions.
   for (const auto& partition : partitions) {
+    // dyc: partition.first is the device name
     const string local_partition_name =
         DeviceNameUtils::LocalName(partition.first);
     if (std::count(device_names.begin(), device_names.end(),
@@ -1406,7 +1426,8 @@ Status DirectSession::CreateGraphs(
     if (!s.ok()) {
       break;
     }
-  }
+  } // for (auto& partition : *outputs)
+
   *flib_def = std::move(client_graph->flib_def);
   std::swap(*input_types, client_graph->feed_types);
   std::swap(*output_types, client_graph->fetch_types);

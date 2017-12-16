@@ -133,6 +133,7 @@ class DirectSession : public Session {
     std::unique_ptr<Graph> graph;
     NameNodeMap name_to_node;
     std::unique_ptr<FunctionLibraryDefinition> flib_def;
+    // dyc: 每个 graph partition 有一个 FunctionLibraryRuntime
     std::vector<PerPartitionExecutorsAndLib> items;
     std::unordered_map<string, size_t> input_name_to_index;
     std::unordered_map<string, string> input_name_to_rendezvous_key;

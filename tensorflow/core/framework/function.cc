@@ -874,7 +874,7 @@ FunctionLibraryDefinition::FunctionLibraryDefinition(
     TF_CHECK_OK(AddFunctionDef(it.second->fdef));
   }
 }
-
+// dyc: default_registry_ 就是全局的 OpRegistry::Global()
 FunctionLibraryDefinition::FunctionLibraryDefinition(
     const OpRegistryInterface* default_registry,
     const FunctionDefLibrary& def_lib)

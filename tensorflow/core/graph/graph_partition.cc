@@ -118,6 +118,7 @@ DataType EdgeType(const Edge* e) {
 }
 
 // Return true iff we need to add a same device send/recv for 'edge'.
+// dyc: same device but different memory type ??
 bool NeedSameDeviceSendRecv(const Edge* edge, const GraphInfo& info) {
   if (edge->IsControlEdge()) {
     return false;
@@ -930,6 +931,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
   int32 num_data = 0;
   int32 num_control = 0;
   for (const Node* dst : g->op_nodes()) {
+    // dyc: for DirectSession, return node->assigned_device_name()
     dstp = opts.node_to_loc(dst);
     GraphDef* dst_graph = &(*partitions)[dstp];
     NodeDef* dst_def = dst_graph->add_node();
@@ -964,6 +966,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
         }
       } else {
         DCHECK(inputs[edge->dst_input()] == nullptr);
+        // dyc: edge->dst_input() is the index of this input edge(for dst_node)
         inputs[edge->dst_input()] = edge;
         ++num_input_edges;
       }
@@ -984,6 +987,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
       GraphDef* src_graph = &(*partitions)[opts.node_to_loc(src)];
       if (src_graph == dst_graph && !NeedSameDeviceSendRecv(edge, g_info)) {
         // Same partition and compatible memory types:
+        // dyc: same device and same memory type
         AddInput(dst_def, src->name(), edge->src_output());
         if (edge->IsControlEdge() ||
             !IsRefType(src->output_type(edge->src_output()))) {
@@ -1103,7 +1107,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
         ++num_data;
         AddInput(dst_def, recv->name(), 0);
       }
-    }
+    } // for (const Edge* edge : inputs)
 
     // Add control edges from 'ref_control_inputs' to 'ref_recvs'.
     // NOTE(yuanbyu): Adding these control edges should not introduce
@@ -1122,7 +1126,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
                  Graph::kControlSlot);
       }
     }
-  }
+  } // for (const Node* dst : g->op_nodes())
 
   // Set versions and function library
   for (auto& it : *partitions) {

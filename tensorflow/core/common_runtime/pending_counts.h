@@ -214,6 +214,7 @@ class PendingCounts {
   //    decrement_pending(h, 1);
   //    *pending_result = pending(h);
   //    *dead_result = dead_count(h);
+  // dyc: 对于调用者，h == dst_item->pending_id
   void adjust_for_activation(Handle h, bool increment_dead, int* pending_result,
                              int* dead_result) {
     DCHECK_GE(pending(h), 1);
