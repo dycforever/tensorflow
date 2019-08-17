@@ -1144,7 +1144,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
         ++num_data;
         AddInput(dst_def, recv->name(), 0);
       }
-    }
+    } // for (const Edge* edge : inputs)
 
     // Add control edges from 'ref_control_inputs' to 'ref_recvs'.
     // NOTE(yuanbyu): Adding these control edges should not introduce
@@ -1163,7 +1163,7 @@ Status Partition(const PartitionOptions& opts, Graph* g,
                  Graph::kControlSlot);
       }
     }
-  }
+  } // for (const Node* dst : g->op_nodes())
 
   const FunctionLibraryDefinition* flib_def = opts.flib_def;
   if (flib_def == nullptr) {

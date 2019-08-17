@@ -67,7 +67,11 @@ template <typename Scalar, bool IsComplex = true>
 struct ParallelMatMulKernel {
   static void Conjugate(const OpKernelContext* context, Tensor* out) {
     const Eigen::ThreadPoolDevice d = context->eigen_cpu_device();
+    // dyc: z is a Eigen::TensorMap<>
     auto z = out->tensor<Scalar, 3>();
+    // dyc: equals to : 
+    //          z.set_device(d); 
+    //          z = z.conjugat()
     z.device(d) = z.conjugate();
   }
 

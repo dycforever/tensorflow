@@ -245,6 +245,8 @@ class Tensor {
     return tensor<T, 2>();
   }
 
+  // dyc: struct TTypes{...} defined in tensor_types.h
+  //      TTypes<>::Tensor is a Eigen::TensorMap<>
   template <typename T, size_t NDIMS>
   typename TTypes<T, NDIMS>::Tensor tensor();
 
